@@ -1,0 +1,28 @@
+# VFM feature extraction API configuration.
+# Environment overrides: SERVER_PORT, MODEL_BACKEND, MODEL_ROOT, MODEL_CHECKPOINT,
+# MODEL_LAYERS ("20 24"), MODEL_DEVICE, MODEL_AMP, MODEL_L2_PATCHES, MODEL_STORAGE_DTYPE,
+# MODEL_WARMUP, IMAGE_SIZE, IMAGE_MAX_UPLOAD_MB.
+
+server_port: 24500
+
+model:
+  # vfm  : real DINOv3 model from the cvpr27 codebase (GPU, inside the vfm container)
+  # fake : deterministic dummy features with the real shapes (tests, laptop development)
+  backend: vfm
+  # cvpr27 checkout inside the container; <root>/platform is added to sys.path
+  root: /work/cvpr27
+  # local HF DINOv3 export; a relative path is resolved against root
+  checkpoint: export_snap3
+  layers: [20, 24]
+  device: cuda:0
+  amp: bf16
+  l2_patches: false
+  # dtype used when serializing arrays in the response (float16 | float32)
+  storage_dtype: float16
+  # run one dummy forward at startup so the first real request is not slow
+  warmup: true
+
+image:
+  # every input is resized to size x size before extraction
+  size: 512
+  max_upload_mb: 20

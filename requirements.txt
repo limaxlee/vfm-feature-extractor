@@ -1,0 +1,8 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7
+pydantic-settings>=2.3
+PyYAML>=6.0
+# numpy, pillow, torch and transformers are provided by the vfm container image.
+# Do NOT reinstall them there. For laptop development see requirements-dev.txt.

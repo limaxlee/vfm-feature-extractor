@@ -1,0 +1,21 @@
+{
+  "server_status": "ready",
+  "backend": "fake",
+  "model": {
+    "checkpoint": "/work/cvpr27/export_snap3",
+    "model_type": "fake",
+    "hidden_size": 1024,
+    "num_hidden_layers": 24,
+    "patch_size": [
+      16,
+      16
+    ],
+    "num_register_tokens": 4,
+    "layers": [
+      20,
+      24
+    ],
+    "device": "cpu",
+    "effective_amp": "fp32"
+  }
+}

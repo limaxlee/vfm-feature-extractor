@@ -1,0 +1,21 @@
+[project]
+name = "vfm-feature-extractor"
+version = "0.1.0"
+description = "FastAPI service that extracts DINOv3 feature vectors and feature maps from images"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# package __init__ files re-export names without __all__
+"__init__.py" = ["F401"]
