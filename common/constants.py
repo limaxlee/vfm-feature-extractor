@@ -14,21 +14,16 @@ DEFAULT_LAYERS = (20, 24)
 DEFAULT_PATCH_SIZE = 16
 HIDDEN_SIZE = 1024
 
+
 class ExtractorKeys(StrEnum):
     """Keys as produced by DinoFeatureExtractor.extract_batch and written by extract.py."""
     FEATURE_VECTOR = "patch_mean_concat"
     FEATURE_MAP = "feature_map"         # suffix: layer_{L}_feature_map, shape (hidden, grid_h, grid_w)
-    METADATA = "metadata_json"          # unicode scalar inside the .npz
 
 
 # feature_names passed to extract_images so unrequested dense outputs are never moved to CPU.
 REQUESTED_FEATURE_NAMES = (ExtractorKeys.FEATURE_MAP, ExtractorKeys.FEATURE_VECTOR)
 
-
-class ResponseFormat(StrEnum):
-    """Output format of POST /features."""
-    JSON = "json"       # vector inline, feature maps base64-encoded
-    NPZ = "npz"         # binary .npz with the same keys as extract.py
 
 # Upload validation. Missing / octet-stream content types are allowed and validated by decoding.
 SUPPORTED_CONTENT_TYPES = frozenset({

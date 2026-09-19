@@ -3,8 +3,6 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from common.constants import ResponseFormat
-
 
 class PreparedImage(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -24,15 +22,10 @@ class ExtractedFeatures(BaseModel):
     image_meta: dict[str, Any] = {}             # input_hw, grid_hw, ... from the model side
 
 
-class ExtractFeaturesQuery(BaseModel):
-    format: ResponseFormat = Field(
-        default=ResponseFormat.JSON,
-        description="json: vector inline, feature maps base64-encoded. "
-                    "npz: binary .npz with the same keys as extract.py"
-    )
+class ExtractFeaturesRequest(BaseModel):
     include_feature_map: bool = Field(
-        default=True,
-        description="Set false to return only the feature vector"
+        default=False,
+        description="Set true to also return the per-layer feature maps (about 2.8 MB of base64 per layer)"
     )
 
 

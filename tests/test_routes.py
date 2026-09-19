@@ -1,9 +1,6 @@
-import json
-from io import BytesIO
-
 import numpy as np
 
-from common.constants import HIDDEN_SIZE, ExtractorKeys
+from common.constants import HIDDEN_SIZE
 from feature_extractor.utils import decode_base64_to_array
 from tests.conftest import make_image_bytes
 
@@ -24,7 +21,7 @@ def test_ready_reports_model_info(client, settings):
     assert body["model"]["layers"] == settings.model.layers
 
 
-def test_extract_features_json(client, settings, jpeg_bytes):
+def test_extract_features_default_is_vector_only(client, settings, jpeg_bytes):
     response = client.post("/features", files={"file": ("photo.jpg", jpeg_bytes, "image/jpeg")})
     assert response.status_code == 200, response.text
     body = response.json()
@@ -42,11 +39,25 @@ def test_extract_features_json(client, settings, jpeg_bytes):
     assert len(vector["data"]) == HIDDEN_SIZE * len(settings.model.layers)
     assert abs(np.linalg.norm(vector["data"]) - 1.0) < 1e-2
 
+    assert body["feature_maps"] == []
+
+
+def test_extract_features_with_feature_maps(client, settings, png_rgba_bytes):
+    response = client.post(
+        "/features",
+        params={"include_feature_map": "true"},
+        files={"file": ("shot.png", png_rgba_bytes, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["image"]["original_hw"] == [700, 300]
+
     maps = body["feature_maps"]
     assert [m["layer"] for m in maps] == settings.model.layers
     for payload in maps:
         assert payload["name"] == f"layer_{payload['layer']}_feature_map"
         assert payload["shape"] == [HIDDEN_SIZE, 32, 32]
+        assert payload["dtype"] == settings.model.storage_dtype
         assert payload["encoding"] == "base64"
         decoded = decode_base64_to_array(payload["data"], payload["shape"], payload["dtype"])
         assert decoded.shape == (HIDDEN_SIZE, 32, 32)
@@ -57,40 +68,6 @@ def test_extract_features_is_deterministic(client, jpeg_bytes):
     first = client.post("/features", files={"file": ("a.jpg", jpeg_bytes, "image/jpeg")}).json()
     second = client.post("/features", files={"file": ("b.jpg", jpeg_bytes, "image/jpeg")}).json()
     assert first["feature_vector"]["data"] == second["feature_vector"]["data"]
-
-
-def test_extract_features_without_feature_map(client, jpeg_bytes):
-    response = client.post(
-        "/features",
-        params={"include_feature_map": "false"},
-        files={"file": ("photo.jpg", jpeg_bytes, "image/jpeg")},
-    )
-    assert response.status_code == 200
-    assert response.json()["feature_maps"] == []
-
-
-def test_extract_features_npz(client, settings, png_rgba_bytes):
-    response = client.post(
-        "/features",
-        params={"format": "npz"},
-        files={"file": ("shot.png", png_rgba_bytes, "image/png")},
-    )
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/octet-stream"
-    assert "shot.npz" in response.headers["content-disposition"]
-
-    with np.load(BytesIO(response.content), allow_pickle=False) as loaded:
-        expected = {f"layer_{layer}_feature_map" for layer in settings.model.layers}
-        expected |= {"patch_mean_concat", ExtractorKeys.METADATA}
-        assert set(loaded.files) == expected
-        assert loaded["patch_mean_concat"].shape == (HIDDEN_SIZE * len(settings.model.layers),)
-        assert loaded["patch_mean_concat"].dtype == np.dtype(settings.model.storage_dtype)
-        metadata = json.loads(str(loaded[ExtractorKeys.METADATA]))
-
-    assert metadata["source"] == "shot.png"
-    assert metadata["original_hw"] == [700, 300]
-    assert metadata["scale_yx"] == [512 / 700, 512 / 300]
-    assert metadata["model"]["layers"] == settings.model.layers
 
 
 def test_extract_features_rejects_unsupported_content_type(client):

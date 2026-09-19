@@ -237,18 +237,21 @@ Replace `SERVER` with the server's IP or hostname.
 
 ```
 laptop$ curl http://SERVER:24500/ready
-laptop$ curl -F "file=@some_image.jpg" "http://SERVER:24500/features?include_feature_map=false"
-laptop$ curl -F "file=@some_image.jpg" "http://SERVER:24500/features?format=npz" -o out.npz
+laptop$ curl -F "file=@some_image.jpg" "http://SERVER:24500/features" -o out.json
+laptop$ curl -F "file=@some_image.jpg" "http://SERVER:24500/features?include_feature_map=true" -o out_maps.json
 ```
 
-Verify the npz the same way the model team does:
+Check the shapes:
 
 ```
 laptop$ python - <<'PY'
+import json, base64
 import numpy as np
-with np.load("out.npz", allow_pickle=False) as data:
-    print(data["patch_mean_concat"].shape, data["patch_mean_concat"].dtype)   # (2048,) float16
-    print(data["layer_24_feature_map"].shape)                                  # (1024, 32, 32)
+r = json.load(open("out_maps.json"))
+print(len(r["feature_vector"]["data"]))                      # 2048
+for m in r["feature_maps"]:
+    arr = np.frombuffer(base64.b64decode(m["data"]), dtype=m["dtype"]).reshape(m["shape"])
+    print(m["name"], arr.shape, arr.dtype)                   # layer_20_feature_map (1024, 32, 32) float16 ...
 PY
 ```
 
@@ -277,15 +280,20 @@ vfm$ PYTORCH_ALLOC_CONF=backend:native,expandable_segments:False \
        --checkpoint export_snap3 --layers 20 24 --features patch_mean_concat feature_map \
        --filename-mode stem --storage-dtype float16 --input-size 512 --batch-size 1 --device cuda:0
 
-vfm$ curl -F "file=@data/cdfsod/DIOR/train/00001.jpg" "http://localhost:24500/features?format=npz" -o /tmp/api_check.npz
+vfm$ curl -F "file=@data/cdfsod/DIOR/train/00001.jpg" "http://localhost:24500/features?include_feature_map=true" -o /tmp/api_check.json
 
 vfm$ python - <<'PY'
+import json, base64
 import numpy as np
 cli = np.load("/tmp/cli_check/00001.npz", allow_pickle=False)
-api = np.load("/tmp/api_check.npz", allow_pickle=False)
-for key in ("patch_mean_concat", "layer_20_feature_map", "layer_24_feature_map"):
-    a, b = cli[key].astype(np.float32), api[key].astype(np.float32)
-    print(key, a.shape, "max abs diff:", np.abs(a - b).max())
+api = json.load(open("/tmp/api_check.json"))
+
+vec = np.asarray(api["feature_vector"]["data"], dtype=np.float32)
+print("patch_mean_concat", vec.shape, "max abs diff:", np.abs(cli["patch_mean_concat"].astype(np.float32) - vec).max())
+
+for m in api["feature_maps"]:
+    arr = np.frombuffer(base64.b64decode(m["data"]), dtype=m["dtype"]).reshape(m["shape"]).astype(np.float32)
+    print(m["name"], arr.shape, "max abs diff:", np.abs(cli[m["name"]].astype(np.float32) - arr).max())
 PY
 ```
 

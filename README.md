@@ -4,7 +4,7 @@ FastAPI service that takes one image, resizes it to 512x512, runs the frozen DIN
 model from the `cvpr27` codebase (`platform/feature_export/extract.py`) and returns:
 
 - **feature vector** `patch_mean_concat`, shape `(2048,)`: per-layer patch means of layers 20 and 24, L2-normalized and concatenated
-- **feature maps** `layer_{L}_feature_map`, shape `(1024, 32, 32)` per layer
+- **feature maps** `layer_{L}_feature_map`, shape `(1024, 32, 32)` per layer, on request
 
 The model is loaded once at startup and stays resident. Nothing is written to disk per request.
 
@@ -24,32 +24,26 @@ run.sh              launch script for the container
 
 | Method | Path            | Description |
 |--------|-----------------|-------------|
-| POST   | `/features`  | multipart field `file`; query `format=json|npz`, `include_feature_map=true|false` |
+| POST   | `/features`     | multipart field `file`; query `include_feature_map=true|false` (default `false`) |
 | GET    | `/health`       | process is alive |
 | GET    | `/ready`        | model is loaded; returns model info |
 | GET    | `/logs`         | zip of the log directory |
 | GET    | `/docs`         | OpenAPI UI |
 
-JSON response: the vector is inline as floats; each feature map is base64 of raw
+The vector is inline as floats. Each feature map, when requested, is base64 of raw
 little-endian `float16` bytes in C order with `shape` and `dtype` alongside.
 
 ```python
 import base64, numpy as np, requests
 
-r = requests.post("http://SERVER:24500/features", files={"file": open("img.jpg", "rb")}).json()
+url = "http://SERVER:24500/features"
+
+r = requests.post(url, files={"file": open("img.jpg", "rb")}).json()
 vector = np.asarray(r["feature_vector"]["data"], dtype=np.float32)          # (2048,)
-fmap = r["feature_maps"][0]
+
+r = requests.post(url, params={"include_feature_map": "true"}, files={"file": open("img.jpg", "rb")}).json()
+fmap = r["feature_maps"][1]                                                   # layer 24
 arr = np.frombuffer(base64.b64decode(fmap["data"]), dtype=fmap["dtype"]).reshape(fmap["shape"])  # (1024, 32, 32)
-```
-
-`format=npz` returns a `.npz` with the same keys and `metadata_json` scalar as the files
-written by `extract.py`:
-
-```python
-r = requests.post("http://SERVER:24500/features", params={"format": "npz"}, files={"file": open("img.jpg", "rb")})
-with np.load(io.BytesIO(r.content), allow_pickle=False) as data:
-    vector = data["patch_mean_concat"]
-    fmap24 = data["layer_24_feature_map"]
 ```
 
 ## Configuration

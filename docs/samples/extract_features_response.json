@@ -1,5 +1,5 @@
 {
-  "_note": "Generated with the fake backend. feature_vector.data is truncated to 8 of 2048 values and each feature_maps[].data to 64 of 2796204 base64 characters.",
+  "_note": "Default request (include_feature_map=false), generated with the fake backend. feature_vector.data is truncated to 8 of 2048 values.",
   "image": {
     "filename": "photo.jpg",
     "content_type": "image/jpeg",
@@ -57,30 +57,5 @@
       0.0180511474609375
     ]
   },
-  "feature_maps": [
-    {
-      "name": "layer_20_feature_map",
-      "shape": [
-        1024,
-        32,
-        32
-      ],
-      "dtype": "float16",
-      "encoding": "base64",
-      "data": "W77JuBy9HTtYu60v7CwbuuI82zvDtqG/dzSltOu+qagEP583HjzWqIW5T7yTPEFA",
-      "layer": 20
-    },
-    {
-      "name": "layer_24_feature_map",
-      "shape": [
-        1024,
-        32,
-        32
-      ],
-      "dtype": "float16",
-      "encoding": "base64",
-      "data": "/b7NO5yzRzlNwlu2yjnhtJo5mDtCPTu6tzNhOO88QbJ5OnA13SvGvGy50LfSuFG6",
-      "layer": 24
-    }
-  ]
+  "feature_maps": []
 }

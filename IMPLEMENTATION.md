@@ -15,7 +15,7 @@ container and drives its `DinoFeatureExtractor` class directly.
 
 | Area | Summary |
 |------|---------|
-| `POST /features` | Multipart image upload → feature vector `(2048,)` + feature maps `(1024, 32, 32)` per layer. JSON or `.npz` output. |
+| `POST /features` | Multipart image upload → feature vector `(2048,)`, plus feature maps `(1024, 32, 32)` per layer when `include_feature_map=true`. JSON output. |
 | `GET /health`, `GET /ready` | Liveness and readiness. `/ready` returns 503 until the model is loaded, then the model description. |
 | `GET /logs` | Zip of the log directory, timestamped filename. |
 | Model backends | `vfm` (real DINOv3, GPU, inside the container) and `fake` (deterministic arrays with the real shapes, no torch). Selected in `config.yaml`. |
@@ -28,7 +28,7 @@ container and drives its `DinoFeatureExtractor` class directly.
 ```
 common/
 ├── config.py                 config.yaml → SETTINGS (pydantic BaseSettings); env overrides via _ENV_MAP
-└── constants.py              ROOT_DIR, IMAGE_SIZE=512, layer/patch/hidden defaults, ExtractorKeys, ResponseFormat,
+└── constants.py              ROOT_DIR, IMAGE_SIZE=512, layer/patch/hidden defaults, ExtractorKeys,
                               supported content types / image modes, torch allocator env vars
 feature_extractor/
 ├── main.py                   FastAPI app, lifespan (build extractor once + warmup), CORS, middleware, router
@@ -40,7 +40,7 @@ feature_extractor/
 │   └── logs.py               download_logs
 ├── schemas/
 │   ├── health.py             CheckHealthResponse, CheckReadyResponse
-│   └── features.py           PreparedImage, ExtractedFeatures, ExtractFeaturesQuery, ExtractFeaturesResponse,
+│   └── features.py           PreparedImage, ExtractedFeatures, ExtractFeaturesRequest, ExtractFeaturesResponse,
 │                             ArrayPayload, FeatureMapPayload, ImageInfo, ModelInfo
 ├── extractor/
 │   ├── base.py               FeatureExtractor protocol
@@ -50,7 +50,7 @@ feature_extractor/
 └── utils/
     ├── logger.py             initialize_logger, LogConfig, get_logs_zip_file
     ├── image.py              decode_image, prepare_image (EXIF transpose → RGB → 512×512 bilinear)
-    └── encoding.py           convert_to_storage_dtype, encode_array_to_base64, decode_base64_to_array, pack_arrays_to_npz
+    └── encoding.py           convert_to_storage_dtype, encode_array_to_base64, decode_base64_to_array
 tests/                        pytest suite (fake backend)
 docs/samples/                 real responses captured from the app (see §4)
 config.yaml                   runtime configuration
@@ -66,7 +66,7 @@ upload ──► routes/features.py
             prepare_image()    → 400 if not a decodable 8-bit image
             extract_features_from_image()
                 extractor.extract()   (threadpool + lock, one forward pass)
-                build JSON or npz     → 500 on any unexpected failure
+                build the response    → 500 on any unexpected failure
 ```
 
 ---
@@ -104,7 +104,7 @@ Environment overrides: `SERVER_PORT`, `MODEL_BACKEND`, `MODEL_ROOT`, `MODEL_CHEC
 
 | Method | Path | Query | Returns |
 |--------|------|-------|---------|
-| POST | `/features` | `format=json\|npz` (default `json`), `include_feature_map=true\|false` (default `true`) | `ExtractFeaturesResponse` or an `.npz` file |
+| POST | `/features` | `include_feature_map=true\|false` (default `false`) | `ExtractFeaturesResponse` |
 | GET | `/health` | | `{"server_status": "healthy"}` |
 | GET | `/ready` | | model description, or 503 while loading |
 | GET | `/logs` | | `application/zip` |
@@ -132,37 +132,30 @@ Error body: `{"detail": "<message>"}`.
 ### curl
 
 ```bash
-# JSON (default)
+# Default: feature vector only (~30 KB)
 curl -F "file=@photo.jpg" "http://SERVER:24500/features" -o response.json
 
-# Vector only, no feature maps (~30 KB)
-curl -F "file=@photo.jpg" "http://SERVER:24500/features?include_feature_map=false"
-
-# npz (same layout as extract.py's output)
-curl -F "file=@photo.jpg" "http://SERVER:24500/features?format=npz" -o photo.npz
+# Vector plus both feature maps (~5.6 MB)
+curl -F "file=@photo.jpg" "http://SERVER:24500/features?include_feature_map=true" -o response.json
 ```
 
 ### Python
 
 ```python
-import base64, io, json
+import base64
 import numpy as np
 import requests
 
 url = "http://SERVER:24500/features"
 
-# JSON
+# Vector only
 r = requests.post(url, files={"file": open("photo.jpg", "rb")}).json()
 vector = np.asarray(r["feature_vector"]["data"], dtype=np.float32)          # (2048,)
+
+# Vector plus feature maps
+r = requests.post(url, params={"include_feature_map": "true"}, files={"file": open("photo.jpg", "rb")}).json()
 fmap = r["feature_maps"][1]                                                   # layer 24
 arr = np.frombuffer(base64.b64decode(fmap["data"]), dtype=fmap["dtype"]).reshape(fmap["shape"])  # (1024, 32, 32)
-
-# npz
-r = requests.post(url, params={"format": "npz"}, files={"file": open("photo.jpg", "rb")})
-with np.load(io.BytesIO(r.content), allow_pickle=False) as data:
-    vector = data["patch_mean_concat"]         # (2048,) float16
-    fmap24 = data["layer_24_feature_map"]      # (1024, 32, 32) float16
-    meta = json.loads(str(data["metadata_json"]))
 ```
 
 ### JSON response (trimmed)
@@ -170,8 +163,8 @@ with np.load(io.BytesIO(r.content), allow_pickle=False) as data:
 Files captured from the running app are in `docs/samples/`. Long arrays are truncated, and each
 file says so in its `_note` field:
 
-- `extract_features_response.json` — default request
-- `extract_features_response_vector_only.json` — `include_feature_map=false`
+- `extract_features_response.json` — default request, vector only
+- `extract_features_response_with_maps.json` — `include_feature_map=true`
 - `check_ready_response.json` — `GET /ready`
 - `error_response.json` — a 400
 
@@ -234,33 +227,18 @@ Field notes:
 
 - `stored_hw` — size as stored in the file. `original_hw` — after EXIF orientation is applied. `input_hw` — what the model saw (always 512×512). `grid_hw` — patch grid, `input / patch_size`.
 - `feature_vector.data` is a plain JSON list. `feature_maps[].data` is base64 of the raw little-endian `float16` bytes in C order; decode with `np.frombuffer(...).reshape(shape)`.
-- With `include_feature_map=false`, `feature_maps` is `[]`.
+- By default `feature_maps` is `[]`. The JSON above was requested with `include_feature_map=true`.
 
-### npz response
+### Sizes and cost (one image)
 
-```
-Content-Type: application/octet-stream
-Content-Disposition: attachment; filename="photo.npz"
+| Request | Size | Server-side time beyond the model forward |
+|---------|------|-------------------------------------------|
+| default, vector only | ~30 KB | ~1 ms |
+| `include_feature_map=true`, both maps | 5.6 MB | ~35 ms (float16 cast + base64 of two 2 MB maps) |
 
-patch_mean_concat      (2048,)          float16
-layer_20_feature_map   (1024, 32, 32)   float16
-layer_24_feature_map   (1024, 32, 32)   float16
-metadata_json          JSON string: image info, scale_yx, model info, shapes
-```
-
-This is the same layout `extract.py` writes, so existing readers of `sample001/00001.npz`
-work unchanged.
-
-### Sizes (one image, both feature maps)
-
-| Format | Size |
-|--------|------|
-| JSON | 5.6 MB |
-| npz | 4.2 MB |
-| JSON, `include_feature_map=false` | ~30 KB |
-
-Each feature map is 2 MB of float16; base64 inflates it by a third. For bulk consumption of
-feature maps, use `format=npz`.
+Each feature map is 2 MB of float16; base64 inflates it by a third. On a 1 Gbps LAN the 5.6 MB
+transfer takes about 45 ms; on a 100 Mbps link about 450 ms. Request feature maps only when
+they will be used.
 
 ---
 
@@ -291,8 +269,8 @@ Definitions, from `extract_batch`:
 - **feature vector** (`patch_mean_concat`): for each layer, mean over patch tokens after LayerNorm
   then L2-normalize; concatenate the layers; L2-normalize again. Shape `(1024 × len(layers),)`.
 
-Both come from a single forward pass. The vector returned by the API is bit-identical to the
-CLI's `.npz` for the same image.
+Both come from a single forward pass. The vector returned by the API is the same tensor the
+CLI writes to its `.npz` for the same image, cast to the same dtype.
 
 ---
 
@@ -326,9 +304,9 @@ These could not be verified on a laptop and need one check each on the server.
 
    If pydantic 1 is pinned by another package, stop and discuss before upgrading.
 
-4. **First real image.** Run one request with `format=npz`, load it with
-   `np.load(..., allow_pickle=False)`, and compare `patch_mean_concat` to the CLI's
-   `sample001/00001.npz` for the same input image. They should match to float16 precision.
+4. **First real image.** Run one request with `include_feature_map=true` for the same image the
+   CLI exported to `sample001/00001.npz`, and compare `feature_vector.data` to the CLI's
+   `patch_mean_concat`. They should match to float16 precision. RUNNING.md §9 has the script.
 
 ---
 
@@ -369,7 +347,7 @@ sudo docker exec -d vfm bash /work/vfm-feature-extractor/run.sh
 - **Model loads once.** A subprocess per request would reload weights and initialize CUDA every time and force disk writes. The lifespan builds the extractor, runs one warmup forward, and keeps it on `app.state`.
 - **Resize in the API, not only in the model.** The requirement is 512×512 for every input. `utils/image.py` guarantees it, and the model receives an image its own transform leaves untouched.
 - **Both outputs from one pass.** `feature_names` selects the two keys; the script only moves requested tensors to CPU.
-- **Client chooses the format.** JSON is convenient; npz is compact and matches the CLI.
+- **Feature maps are opt-in.** They are 5.6 MB per response, so the default returns only the 30 KB vector and `include_feature_map=true` adds the maps.
 - **Single worker, serialized GPU.** One GPU, one model, batch size 1. Inference runs in a threadpool so the event loop stays responsive; a lock queues concurrent requests.
 - **Fake backend for tests.** The whole HTTP surface, image handling and encoding are tested without torch.
 - **Errors are built-ins.** Utilities raise `ValueError`; routes map them to status codes. Deliberate 4xx raises sit outside `try` blocks so they are never rewrapped as 500.
